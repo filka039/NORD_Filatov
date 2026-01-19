@@ -38,7 +38,7 @@ jobs:
 
       - name: Generate Allure report
         run: |
-          mvn allure:generate
+          mvn allure:report
 
       - name: Upload Allure report as artifact
         uses: actions/upload-artifact@v4
