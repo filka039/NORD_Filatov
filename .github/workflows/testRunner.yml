@@ -1,4 +1,4 @@
-name: Test Runner
+name: Integration Tests Against Released JAR
 
 on:
   push:
@@ -16,26 +16,52 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'adopt'
 
       - name: Cache Maven packages
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.m2/repository
           key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
           restore-keys: |
             ${{ runner.os }}-maven-
 
-      - name: Build and run tests with Maven
+      - name: Download JAR from Release
+        uses: actions/download-release@v2
+        with:
+          repo: ${{ github.repository }}
+          tag: v1.0.0
+          asset-pattern: "internal-*.jar"
+          path: target/
+
+      - name: Verify JAR exists
+        run: |
+          ls -la target/internal-*.jar
+          if [ ! -f target/internal-*.jar ]; then
+            echo "JAR file not found in release v1.0.0"
+            exit 1
+          fi
+
+      - name: Start internal application in background
+        run: |
+          # Запускаем JAR с нужными системными свойствами
+          java -Dsecret=qazWSXedc -Dmock=http://localhost:8888/ -jar target/internal-*.jar &
+          APP_PID=$!
+          echo "Started internal application in background (PID: $APP_PID)"
+
+          curl -f http://localhost:8080/endpoint ||
+          echo "Application is ready at http://localhost:8080/endpoint"
+
+      - name: Run tests
         run: |
           mvn clean test
-
+          
       - name: Generate Allure report
         run: |
           mvn allure:report
@@ -45,3 +71,7 @@ jobs:
         with:
           name: allure-report
           path: target/site/allure-maven-plugin
+
+      - name: Kill application
+        run: |
+          pkill -f "internal-*.jar" || echo "No application to kill"
