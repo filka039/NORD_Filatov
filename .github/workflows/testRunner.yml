@@ -33,35 +33,56 @@ jobs:
             ${{ runner.os }}-maven-
 
       - name: Download JAR from Release
-        uses: actions/download-release@v2
-        with:
-          repo: ${{ github.repository }}
-          tag: v1.0.0
-          asset-pattern: "internal-*.jar"
-          path: target/
-
-      - name: Verify JAR exists
         run: |
-          ls -la target/internal-*.jar
-          if [ ! -f target/internal-*.jar ]; then
-            echo "JAR file not found in release v1.0.0"
+          REPO="${{ github.repository }}"
+          TAG="v1.0.0"
+          ASSET_NAME="internal-*.jar"
+
+          RELEASE_ID=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/releases/tags/$TAG" | jq -r '.id')
+
+          if [ -z "$RELEASE_ID" ] || [ "$RELEASE_ID" = "null" ]; then
+            echo "Release tag '$TAG' not found!"
             exit 1
           fi
 
+          ASSET_URL=$(curl -s -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/releases/$RELEASE_ID/assets" | \
+            jq -r ".[] | select(.name | test(\"$ASSET_NAME\")) | .browser_download_url" | head -1)
+
+          if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then
+            echo "No asset matching '$ASSET_NAME' found in release '$TAG'"
+            exit 1
+          fi
+
+          mkdir -p target
+          curl -L -H "Accept: application/octet-stream" -o target/internal.jar "$ASSET_URL"
+
+          ls -la target/internal.jar
+
+          if [ ! -f target/internal.jar ]; then
+            echo "Failed to download JAR"
+            exit 1
+          fi
+
+          file target/internal.jar | grep -q "Java archive"
+          echo "Successfully downloaded JAR: target/internal.jar"
+
       - name: Start internal application in background
         run: |
-          # Запускаем JAR с нужными системными свойствами
-          java -Dsecret=qazWSXedc -Dmock=http://localhost:8888/ -jar target/internal-*.jar &
+          java -Dsecret=qazWSXedc -Dmock=http://localhost:8888/ -jar target/internal.jar &
           APP_PID=$!
           echo "Started internal application in background (PID: $APP_PID)"
 
-          curl -f http://localhost:8080/endpoint ||
+          sleep 20
+
+          curl -f http://localhost:8080/endpoint || (echo "Health endpoint not reachable" && exit 1)
           echo "Application is ready at http://localhost:8080/endpoint"
 
       - name: Run tests
         run: |
           mvn clean test
-          
+
       - name: Generate Allure report
         run: |
           mvn allure:report
@@ -74,4 +95,4 @@ jobs:
 
       - name: Kill application
         run: |
-          pkill -f "internal-*.jar" || echo "No application to kill"
+          pkill -f "internal.jar" || echo "No application to kill"
